@@ -1,0 +1,4 @@
+config.js
+serviceAccountKey.json
+__pycache__/
+venv/

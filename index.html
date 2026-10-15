@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jarvis AI - Painel de Controle</title>
+    <!-- Importação dos SDKs do Firebase -->
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #0f172a; color: #f8fafc; text-align: center; padding: 20px; }
+        .container { max-width: 400px; margin: auto; background: #1e293b; padding: 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.3); }
+        button { width: 100%; padding: 12px; margin: 10px 0; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; font-weight: bold; }
+        .btn-ligar { background: #22c55e; color: white; }
+        .btn-desligar { background: #ef4444; color: white; }
+        .btn-acao { background: #3b82f6; color: white; }
+        select { width: 100%; padding: 10px; margin: 10px 0; border-radius: 6px; background: #334155; color: white; border: none; }
+        #status-msg { margin-bottom: 15px; font-size: 14px; color: #94a3b8; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h2>Jarvis AI</h2>
+        <p>Painel de Controle Mobile & Nuvem</p>
+        
+        <div id="status-msg">Aguardando comando...</div>
+
+        <button class="btn-ligar" onclick="ligarPC()">Ligar PC (Wake-on-LAN)</button>
+
+        <select id="select-apps">
+            <option value="">Carregando aplicativos...</option>
+        </select>
+        <button class="btn-acao" onclick="abrirApp()">Abrir</button>
+
+        <button class="btn-desligar" onclick="desligarPC()">Desligar PC</button>
+    </div>
+
+    <!-- Carrega a configuração segura (que fica fora do controle do Git) -->
+    <script src="config.js"></script>
+    <script>
+        // Inicializa o Firebase com os dados do config.js
+        if (window.CONFIG && window.CONFIG.FIREBASE_CONFIG) {
+            firebase.initializeApp(window.CONFIG.FIREBASE_CONFIG);
+            const db = firebase.firestore();
+            console.log("Firebase conectado no Front-end!");
+        }
+
+        // URL do Servidor Flask local (atualize se o IP do PC mudar após queda de energia)
+        const PC_URL = "http://192.168.1.4:5000";
+
+        async function verificarStatus() {
+            try {
+                let res = await fetch(`${PC_URL}/status`);
+                let data = await res.json();
+                document.getElementById("status-msg").innerText = data.mensagem;
+                carregarApps();
+            } catch (e) {
+                document.getElementById("status-msg").innerText = "Erro ao conectar com o PC.";
+            }
+        }
+
+        async function ligarPC() {
+            try {
+                let res = await fetch(`${PC_URL}/pc/ligar`, { method: 'POST' });
+                let data = await res.json();
+                alert(data.mensagem);
+            } catch (e) {
+                alert("Erro ao enviar pacote WoL.");
+            }
+        }
+
+        async function desligarPC() {
+            if(confirm("Deseja realmente desligar o computador?")) {
+                try {
+                    let res = await fetch(`${PC_URL}/pc/desligar`, { method: 'POST' });
+                    let data = await res.json();
+                    alert(data.mensagem);
+                } catch (e) {
+                    alert("Erro ao desligar PC.");
+                }
+            }
+        }
+
+        async function carregarApps() {
+            try {
+                let res = await fetch(`${PC_URL}/pc/apps`);
+                let apps = await res.json();
+                let select = document.getElementById("select-apps");
+                select.innerHTML = "";
+                apps.forEach(app => {
+                    let opt = document.createElement("option");
+                    opt.value = app.comando;
+                    opt.innerText = app.nome;
+                    select.appendChild(opt);
+                });
+            } catch (e) {
+                document.getElementById("select-apps").innerHTML = '<option>Erro ao buscar apps do PC</option>';
+            }
+        }
+
+        async function abrirApp() {
+            let appCmd = document.getElementById("select-apps").value;
+            if (!appCmd) return;
+            try {
+                let res = await fetch(`${PC_URL}/pc/abrir`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ app: appCmd })
+                });
+                let data = await res.json();
+                alert(data.mensagem);
+            } catch (e) {
+                alert("Erro ao abrir aplicativo.");
+            }
+        }
+
+        window.onload = verificarStatus;
+    </script>
+</body>
+</html>
