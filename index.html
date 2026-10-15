@@ -3,52 +3,193 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Jarvis AI - Painel de Controle</title>
+    <title>Jarvis AI - Assistente de Voz</title>
     <!-- Importação dos SDKs do Firebase -->
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
     <style>
         body { font-family: Arial, sans-serif; background-color: #0f172a; color: #f8fafc; text-align: center; padding: 20px; }
-        .container { max-width: 400px; margin: auto; background: #1e293b; padding: 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.3); }
+        .container { max-width: 450px; margin: auto; background: #1e293b; padding: 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.3); }
         button { width: 100%; padding: 12px; margin: 10px 0; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; font-weight: bold; }
+        .btn-voz { background: #8b5cf6; color: white; }
         .btn-ligar { background: #22c55e; color: white; }
         .btn-desligar { background: #ef4444; color: white; }
         .btn-acao { background: #3b82f6; color: white; }
         select { width: 100%; padding: 10px; margin: 10px 0; border-radius: 6px; background: #334155; color: white; border: none; }
         #status-msg { margin-bottom: 15px; font-size: 14px; color: #94a3b8; }
+        #resposta-jarvis { margin-top: 15px; background: #0f172a; padding: 12px; border-radius: 8px; font-size: 14px; text-align: left; min-height: 60px; color: #38bdf8; }
     </style>
 </head>
 <body>
 
     <div class="container">
         <h2>Jarvis AI</h2>
-        <p>Painel de Controle Mobile & Nuvem</p>
+        <p>Painel de Controle & Voz</p>
         
         <div id="status-msg">Aguardando comando...</div>
+
+        <button class="btn-voz" onclick="iniciarEscutaVoz()">🎤 Iniciar Escuta (Jarvis)</button>
+
+        <div id="resposta-jarvis">Diga "Jarvis notícias" ou "Jarvis bom dia"...</div>
+
+        <hr style="border-color: #334155; margin: 20px 0;">
 
         <button class="btn-ligar" onclick="ligarPC()">Ligar PC (Wake-on-LAN)</button>
 
         <select id="select-apps">
             <option value="">Carregando aplicativos...</option>
         </select>
-        <button class="btn-acao" onclick="abrirApp()">Abrir</button>
+        <button class="btn-acao" onclick="abrirApp()">Abrir Aplicativo</button>
 
         <button class="btn-desligar" onclick="desligarPC()">Desligar PC</button>
     </div>
 
-    <!-- Carrega a configuração segura (que fica fora do controle do Git) -->
+    <!-- Carrega a configuração segura -->
     <script src="config.js"></script>
     <script>
-        // Inicializa o Firebase com os dados do config.js
+        let db;
         if (window.CONFIG && window.CONFIG.FIREBASE_CONFIG) {
             firebase.initializeApp(window.CONFIG.FIREBASE_CONFIG);
-            const db = firebase.firestore();
-            console.log("Firebase conectado no Front-end!");
+            db = firebase.firestore();
         }
 
-        // URL do Servidor Flask local (atualize se o IP do PC mudar após queda de energia)
         const PC_URL = "http://192.168.1.4:5000";
+        let aguardandoFeedbackNoticia = false;
 
+        // Sintaxe de Voz do Navegador (TTS)
+        function falar(texto, callback) {
+            let utterance = new SpeechSynthesisUtterance(texto);
+            utterance.lang = "pt-BR";
+            if (callback) utterance.onend = callback;
+            window.speechSynthesis.speak(utterance);
+        }
+
+        // Reconhecimento de Voz
+        function iniciarEscutaVoz() {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            if (!SpeechRecognition) {
+                alert("Seu navegador não suporta reconhecimento de voz.");
+                return;
+            }
+
+            const recognition = new SpeechRecognition();
+            recognition.lang = "pt-BR";
+            recognition.interimResults = false;
+            recognition.maxAlternatives = 1;
+
+            document.getElementById("status-msg").innerText = "Ouvindo...";
+            recognition.start();
+
+            recognition.onresult = async function(event) {
+                let comando = event.results[0][0].transcript.toLowerCase();
+                document.getElementById("resposta-jarvis").innerText = `Você disse: "${comando}"`;
+                document.getElementById("status-msg").innerText = "Processando...";
+
+                // Se estivermos aguardando feedback da notícia anterior
+                if (aguardandoFeedbackNoticia) {
+                    if (comando.includes("remova do meu perfil")) {
+                        await salvarPreferenciaNoticia("remover");
+                        falar("Entendido. Vou evitar sugerir este tipo de notícia no futuro.");
+                    } else if (comando.includes("adicione ao meu perfil")) {
+                        await salvarPreferenciaNoticia("adicionar");
+                        falar("Ótimo. Vou priorizar notícias semelhantes para você.");
+                    } else {
+                        falar("Não entendi o comando. Continuando normalmente.");
+                    }
+                    aguardandoFeedbackNoticia = false;
+                    document.getElementById("status-msg").innerText = "Aguardando comando...";
+                    return;
+                }
+
+                // Verifica a palavra-chave "jarvis"
+                if (comando.includes("jarvis")) {
+                    if (comando.includes("notícias") || comando.includes("noticia")) {
+                        await lidarComNoticias();
+                    } else if (comando.includes("bom dia")) {
+                        await lidarComBomDia();
+                    } else {
+                        // Processa comandos gerais via Groq API
+                        await processarComandoGroq(comando);
+                    }
+                } else {
+                    falar("Por favor, comece a frase chamando por Jarvis.");
+                    document.getElementById("status-msg").innerText = "Aguardando comando...";
+                }
+            };
+
+            recognition.onerror = function() {
+                document.getElementById("status-msg").innerText = "Erro na escuta de voz.";
+            };
+        }
+
+        // Função para interagir com a API da Groq
+        async function chamarGroq(prompt) {
+            const apiKey = window.CONFIG.GROK_API_KEY;
+            try {
+                let resposta = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+                    method: "POST",
+                    headers: {
+                        "Authorization": `Bearer ${apiKey}`,
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({
+                        model: "llama3-70b-8192",
+                        messages: [{ role: "user", content: prompt }]
+                    })
+                });
+                let data = await resposta.json();
+                return data.choices[0].message.content;
+            } catch (e) {
+                return "Desculpe, ocorreu um erro ao consultar a inteligência artificial.";
+            }
+        }
+
+        async function lidarComBomDia() {
+            let prompt = "Forneça uma saudação de Bom Dia curta, amigável, com uma previsão do tempo genérica simulada para o Brasil, mencionando temperatura e chance de chuva.";
+            let respostaIA = await chamarGroq(prompt);
+            
+            document.getElementById("resposta-jarvis").innerText = respostaIA;
+            document.getElementById("status-msg").innerText = "Aguardando comando...";
+            falar(respostaIA);
+        }
+
+        async function lidarComNoticias() {
+            let prompt = "Resuma em uma frase curta as principais notícias de destaque do dia de hoje.";
+            let noticia = await chamarGroq(prompt);
+
+            let textoCompleto = `Aqui estão as notícias de hoje: ${noticia}. Deseja que eu remova ou adicione este tema ao seu perfil?`;
+            document.getElementById("resposta-jarvis").innerText = textoCompleto;
+            document.getElementById("status-msg").innerText = "Aguardando feedback...";
+            
+            aguardandoFeedbackNoticia = true;
+            falar(textoCompleto, () => {
+                // Inicia escuta automática para capturar o feedback do usuário logo após falar
+                setTimeout(iniciarEscutaVoz, 1000);
+            });
+        }
+
+        async function salvarPreferenciaNoticia(acao) {
+            if (!db) return;
+            try {
+                await db.collection("preferencias_usuario").add({
+                    tipo: "noticia",
+                    acao: acao,
+                    timestamp: firebase.firestore.FieldValue.serverTimestamp()
+                });
+            } catch (e) {
+                console.error("Erro ao salvar no Firestore:", e);
+            }
+        }
+
+        async function processarComandoGroq(texto) {
+            let prompt = `O usuário disse: "${texto}". Responda de forma direta e concisa como um assistente virtual inteligente chamado Jarvis.`;
+            let resposta = await chamarGroq(prompt);
+            document.getElementById("resposta-jarvis").innerText = resposta;
+            document.getElementById("status-msg").innerText = "Aguardando comando...";
+            falar(resposta);
+        }
+
+        // Funções do PC mantidas
         async function verificarStatus() {
             try {
                 let res = await fetch(`${PC_URL}/status`);
@@ -56,7 +197,7 @@
                 document.getElementById("status-msg").innerText = data.mensagem;
                 carregarApps();
             } catch (e) {
-                document.getElementById("status-msg").innerText = "Erro ao conectar com o PC.";
+                document.getElementById("status-msg").innerText = "PC offline ou servidor inativo.";
             }
         }
 
@@ -95,7 +236,7 @@
                     select.appendChild(opt);
                 });
             } catch (e) {
-                document.getElementById("select-apps").innerHTML = '<option>Erro ao buscar apps do PC</option>';
+                document.getElementById("select-apps").innerHTML = '<option>Erro ao buscar apps</option>';
             }
         }
 
